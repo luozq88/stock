@@ -14,7 +14,7 @@ DATABASE_NAME = 'stock.db'
 def get_stock_basic():
     """获取股票基本信息"""
     # 初始化tushare
-    ts.set_token('your_token_here')  # 需要替换为你自己的tushare token
+    ts.set_token('2f4f7b0dca606122c89b03503ebb70c4b26652328f446848a69e71e2')
     pro = ts.pro_api()
     
     # 获取股票基本信息
@@ -24,7 +24,7 @@ def get_stock_basic():
 
 def get_stock_daily(code, start_date, end_date):
     """获取股票日线数据"""
-    ts.set_token('your_token_here')  # 需要替换为你自己的tushare token
+    ts.set_token('2f4f7b0dca606122c89b03503ebb70c4b26652328f446848a69e71e2')
     pro = ts.pro_api()
     
     # 获取日线数据
