@@ -1,0 +1,3 @@
+tushare
+numpy
+pandas
