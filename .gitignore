@@ -1,2 +1,9 @@
 # 忽略数据目录
 data/
+
+# 忽略Python缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
