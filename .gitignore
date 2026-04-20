@@ -7,3 +7,6 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+
+# 忽略选股结果文件
+selected_stocks.txt
