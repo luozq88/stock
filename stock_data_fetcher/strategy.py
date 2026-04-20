@@ -1,6 +1,8 @@
 """
 选股策略模块
 """
+import os
+import datetime
 import tushare as ts
 import pandas as pd
 import logging
@@ -31,17 +33,52 @@ class StockStrategy:
 
     def get_realtime_from_sina(self):
         try:
-            url = 'http://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData?page=1&num=4000&sort=symbol&asc=0&node=hs_a&symbol=&_s_r_a=auto'
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                import json
-                data = json.loads(response.text)
-                df = pd.DataFrame(data)
-                df['ts_code'] = df['code'].apply(lambda x: f"{x}.SH" if x.startswith('6') else f"{x}.SZ")
-                df['pct_chg'] = pd.to_numeric(df['changepercent'], errors='coerce')
-                df['close'] = pd.to_numeric(df['trade'], errors='coerce')
-                df['vol'] = pd.to_numeric(df['volume'], errors='coerce')
-                logger.info(f"从新浪财经获取到 {len(df)} 只股票实时行情")
+            import re
+            stock_codes = []
+
+            cursor = self.db.conn.cursor()
+            cursor.execute('SELECT ts_code FROM stock_info')
+            rows = cursor.fetchall()
+            stock_codes = [row['ts_code'] for row in rows]
+
+            all_data = []
+            batch_size = 100
+
+            for i in range(0, len(stock_codes), batch_size):
+                batch = stock_codes[i:i+batch_size]
+                qt_codes = []
+                for code in batch:
+                    if code.endswith('.SH'):
+                        qt_codes.append(f"sh{code[:-3]}")
+                    else:
+                        qt_codes.append(f"sz{code[:-3]}")
+
+                qt_url = f"http://qt.gtimg.cn/q={','.join(qt_codes)}"
+                resp = requests.get(qt_url, timeout=10)
+                if resp.status_code == 200:
+                    lines = resp.text.strip().split(';')
+                    for line in lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        match = re.search(r'v_(\w+)="(.+)"', line)
+                        if match:
+                            code = match.group(1)
+                            fields = match.group(2).split('~')
+                            if len(fields) > 40:
+                                stock_code = code[2:]
+                                exchange = 'SH' if code.startswith('sh') else 'SZ'
+                                ts_code = f"{stock_code}.{exchange}"
+                                all_data.append({
+                                    'ts_code': ts_code,
+                                    'close': float(fields[3]) if fields[3] else 0,
+                                    'pct_chg': float(fields[32]) if fields[32] else 0,
+                                    'vol': float(fields[6]) if fields[6] else 0
+                                })
+
+            if all_data:
+                df = pd.DataFrame(all_data)
+                logger.info(f"从腾讯财经获取到 {len(df)} 只股票实时行情")
                 return df
             return None
         except Exception as e:
@@ -189,7 +226,19 @@ class StockStrategy:
             if today_vol is None or pd.isna(today_vol) or today_vol <= 0:
                 continue
 
-            vol_threshold = tech['vol5'] * 0.9
+            current_hour = datetime.datetime.now().hour
+            current_minute = datetime.datetime.now().minute
+
+            if 11 <= current_hour <= 12:
+                vol_ratio_threshold = 0.9
+            elif current_hour == 14 and current_minute <= 30:
+                vol_ratio_threshold = 1.3
+            elif current_hour == 10 and current_minute >= 30:
+                vol_ratio_threshold = 0.8
+            else:
+                vol_ratio_threshold = 1.0
+
+            vol_threshold = tech['vol5'] * vol_ratio_threshold
             if today_vol < vol_threshold:
                 continue
 
@@ -228,10 +277,26 @@ class StockStrategy:
         logger.info(f"筛选完成，共选出 {len(selected_stocks)} 只股票")
         return selected_stocks
 
+    def save_to_file(self, selected_stocks, filename="selected_stocks.txt"):
+        if not selected_stocks:
+            logger.info("未筛选到符合条件的股票")
+            return
+
+        output_dir = os.path.dirname(os.path.dirname(__file__))
+        filepath = os.path.join(output_dir, filename)
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            for stock in selected_stocks:
+                f.write(f"{stock['ts_code']}\n")
+
+        logger.info(f"选股结果已保存到: {filepath}")
+
     def print_results(self, selected_stocks):
         if not selected_stocks:
             logger.info("未筛选到符合条件的股票")
             return
+
+        self.save_to_file(selected_stocks)
 
         print("\n" + "=" * 120)
         print(f"{'代码':<12} {'名称':<10} {'涨幅%':<8} {'现价':<8} {'MA5':<8} {'MA10':<8} {'MA20':<8} {'今日量':<12} {'VOL5':<12} {'量比':<8} {'行业':<15}")
