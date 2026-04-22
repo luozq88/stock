@@ -319,5 +319,175 @@ class StockStrategy:
         print(f"共选出 {len(selected_stocks)} 只股票")
         print("=" * 120)
 
+    def screen_stocks_strategy2(self):
+        logger.info("=" * 50)
+        logger.info("开始执行策略2...")
+        logger.info("=" * 50)
+
+        prev_date = self.db.get_latest_trade_date()
+        if not prev_date:
+            logger.error("数据库中无历史数据")
+            return []
+
+        logger.info(f"前一交易日（数据库最新）: {prev_date}")
+
+        prev_daily_data = self.db.get_daily_data_by_date(prev_date)
+        if not prev_daily_data:
+            logger.error("前一交易日无日线数据")
+            return []
+
+        prev_tech = self.db.get_tech_indicators(prev_date)
+        if not prev_tech:
+            logger.error("前一交易日无技术指标数据")
+            return []
+
+        tech_dict = {}
+        for row in prev_tech:
+            tech_dict[row['ts_code']] = {
+                'ma5': row['ma5'],
+                'ma10': row['ma10'],
+                'ma20': row['ma20'],
+                'vol5': row['vol5']
+            }
+
+        daily_dict = {}
+        for row in prev_daily_data:
+            daily_dict[row['ts_code']] = {
+                'close': row['close'],
+                'pct_chg': row['pct_chg'],
+                'vol': row['vol'],
+                'pre_close': row['pre_close']
+            }
+
+        logger.info(f"获取到 {len(daily_dict)} 只股票的前一日日线数据")
+        logger.info(f"获取到 {len(tech_dict)} 只股票的前一日技术指标")
+
+        realtime_df = self.get_realtime_from_sina()
+        if realtime_df is None or realtime_df.empty:
+            logger.warning("新浪财经数据获取失败，尝试腾讯财经...")
+            realtime_df = self.get_realtime_from_tencent()
+
+        if realtime_df is None or realtime_df.empty:
+            logger.warning("腾讯财经数据获取失败，尝试Tushare...")
+            realtime_df = self.get_realtime_from_tushare()
+
+        if realtime_df is None or realtime_df.empty:
+            logger.error("所有实时行情数据源均获取失败")
+            return []
+
+        logger.info(f"获取到 {len(realtime_df)} 只股票的当日实时数据")
+
+        selected_stocks = []
+
+        for _, row in realtime_df.iterrows():
+            ts_code = row['ts_code']
+
+            if ts_code not in daily_dict:
+                continue
+
+            if ts_code not in tech_dict:
+                continue
+
+            prev_daily = daily_dict[ts_code]
+            tech = tech_dict[ts_code]
+
+            prev_pct_chg = prev_daily['pct_chg']
+            if prev_pct_chg is None or pd.isna(prev_pct_chg):
+                continue
+
+            if prev_pct_chg < 2.0 or prev_pct_chg > 8.0:
+                continue
+
+            prev_vol = prev_daily['vol']
+            if prev_vol is None or pd.isna(prev_vol) or prev_vol <= 0:
+                continue
+
+            if tech['vol5'] <= 0:
+                continue
+
+            vol_ratio = prev_vol / tech['vol5']
+            if vol_ratio < 1.2:
+                continue
+
+            current_pct_chg = row.get('pct_chg')
+            if current_pct_chg is None or pd.isna(current_pct_chg):
+                continue
+
+            if current_pct_chg < -2.0 or current_pct_chg > 2.0:
+                continue
+
+            current_price = row.get('close')
+            if current_price is None or pd.isna(current_price) or current_price <= 0:
+                continue
+
+            today_vol = row.get('vol')
+            if today_vol is None or pd.isna(today_vol) or today_vol <= 0:
+                continue
+
+            selected_stocks.append({
+                'ts_code': ts_code,
+                'current_price': current_price,
+                'pct_chg': current_pct_chg,
+                'today_vol': today_vol,
+                'prev_close': prev_daily['close'],
+                'prev_pct_chg': prev_pct_chg,
+                'prev_vol': prev_vol,
+                'prev_ma5': tech['ma5'],
+                'prev_ma10': tech['ma10'],
+                'prev_ma20': tech['ma20'],
+                'prev_vol5': tech['vol5'],
+                'prev_vol_ratio': vol_ratio
+            })
+
+        selected_stocks.sort(key=lambda x: x['pct_chg'], reverse=True)
+
+        if selected_stocks:
+            ts_codes = [s['ts_code'] for s in selected_stocks]
+            stock_info_list = self.db.get_stock_info_by_codes(ts_codes)
+            info_dict = {}
+            for info in stock_info_list:
+                info_dict[info['ts_code']] = {
+                    'name': info['name'],
+                    'industry': info['industry']
+                }
+
+            for stock in selected_stocks:
+                if stock['ts_code'] in info_dict:
+                    stock['name'] = info_dict[stock['ts_code']]['name']
+                    stock['industry'] = info_dict[stock['ts_code']]['industry']
+                else:
+                    stock['name'] = '未知'
+                    stock['industry'] = '未知'
+
+        logger.info(f"策略2筛选完成，共选出 {len(selected_stocks)} 只股票")
+        return selected_stocks
+
+    def print_results_strategy2(self, selected_stocks):
+        if not selected_stocks:
+            logger.info("未筛选到符合条件的股票")
+            return
+
+        self.save_to_file(selected_stocks, "selected_stocks_strategy2.txt")
+
+        print("\n" + "=" * 140)
+        print(f"{'代码':<12} {'名称':<10} {'今日涨幅%':<10} {'现价':<8} {'昨收':<8} {'昨日涨幅%':<10} {'昨日量':<12} {'VOL5':<12} {'昨日量比':<10} {'行业':<15}")
+        print("-" * 140)
+
+        for stock in selected_stocks:
+            print(f"{stock['ts_code']:<12} "
+                  f"{stock['name']:<10} "
+                  f"{stock['pct_chg']:<10.2f} "
+                  f"{stock['current_price']:<8.2f} "
+                  f"{stock['prev_close']:<8.2f} "
+                  f"{stock['prev_pct_chg']:<10.2f} "
+                  f"{stock['prev_vol']:<12.0f} "
+                  f"{stock['prev_vol5']:<12.0f} "
+                  f"{stock['prev_vol_ratio']:<10.2f} "
+                  f"{stock['industry']:<15}")
+
+        print("=" * 140)
+        print(f"策略2共选出 {len(selected_stocks)} 只股票")
+        print("=" * 140)
+
     def close(self):
         self.db.close()

@@ -213,6 +213,15 @@ class Database:
         ''', (trade_date,))
         return cursor.fetchall()
 
+    def get_daily_data_by_date(self, trade_date):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT ts_code, trade_date, open, high, low, close, pre_close, change, pct_chg, vol, amount
+            FROM daily_data
+            WHERE trade_date = ?
+        ''', (trade_date,))
+        return cursor.fetchall()
+
     def get_stock_info_by_codes(self, ts_codes):
         if not ts_codes:
             return []
