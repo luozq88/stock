@@ -10,3 +10,4 @@ __pycache__/
 
 # 忽略选股结果文件
 selected_stocks.txt
+selected_stocks_strategy2.txt
